@@ -23,8 +23,11 @@ import com.intellij.psi.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class RecordBeanActionHandler implements LanguageCodeInsightActionHandler {
     private static final String JSON_PROPERTY_ANNOTATION = "com.fasterxml.jackson.annotation.JsonProperty";
@@ -46,58 +49,97 @@ public class RecordBeanActionHandler implements LanguageCodeInsightActionHandler
 
     @Override
     public void invoke(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
-        Messenger msg = new Messenger(project);
+        PsiClass rootClass = ClassLocator.locateClass(editor, file);
 
-        try {
-            PsiClass rootClass = ClassLocator.locateClass(editor, file);
-
-            if (rootClass == null) {
-                return;
-            }
-
-            // Delete inner classes
-            List<PsiClass> innerClasses = Arrays.asList(rootClass.getInnerClasses());
-
-            innerClasses.forEach(PsiElement::delete);
-
-            // Delete methods
-            List<PsiMethod> methods = Arrays.asList(rootClass.getMethods());
-
-            methods.forEach(PsiElement::delete);
-
-            // Generate getters
-            List<PsiField> fields = Arrays.asList(rootClass.getFields());
-
-            fields.stream()
-                    .map(field -> generateGetter(project, field))
-                    .forEach(rootClass::add);
-
-            rootClass.add(generateConstructor(project, rootClass, fields));
-            rootClass.add(generateEquals(project, rootClass, fields));
-            rootClass.add(generateHashCode(project, rootClass, fields));
-            rootClass.add(generateToString(project, rootClass, fields));
-
-            PsiClass builderClass = generateBuilderClass(project, rootClass);
-
-            fields.stream()
-                    .map(field -> generateField(project, field))
-                    .forEach(builderClass::add);
-
-            fields.stream()
-                    .map(field -> generateBuilderMethod(project, builderClass, field))
-                    .forEach(builderClass::add);
-
-            builderClass.add(generateBuildMethod(project, rootClass, fields));
-
-            rootClass.add(generateNewBuilderMethod(project, rootClass, builderClass));
-
-            // Shorten class names
-            JavaCodeStyleManager codeStyleManager = JavaCodeStyleManager.getInstance(project);
-
-            codeStyleManager.shortenClassReferences(rootClass);
-        } catch (Exception ex) {
-            msg.show(ex.getClass().getName() + ": " + ex.getMessage());
+        if (rootClass == null) {
+            return;
         }
+
+        // Get fields
+        List<PsiField> fields = Arrays.asList(rootClass.getFields());
+
+        Set<String> potentialGetters = fields.stream()
+                .flatMap(field -> Stream.of(field.getName(), "get" + capitalize(field.getName())))
+                .collect(Collectors.toSet());
+
+        Set<String> potentialMethodsToDelete = new HashSet<>(potentialGetters);
+        potentialMethodsToDelete.add("toString");
+        potentialMethodsToDelete.add("hashCode");
+        potentialMethodsToDelete.add("equals");
+        potentialMethodsToDelete.add("newBuilder");
+
+        // Delete methods
+        List<PsiMethod> methods = Arrays.asList(rootClass.getMethods());
+
+        List<PsiMethod> methodsToDelete = methods.stream()
+                .filter(method -> potentialMethodsToDelete.contains(method.getName()))
+                .collect(Collectors.toList());
+
+        methodsToDelete.forEach(PsiElement::delete);
+
+        // Delete constructors
+        List<PsiMethod> constructors = Arrays.asList(rootClass.getConstructors());
+
+        constructors.forEach(PsiMethod::delete);
+
+        // Generate getters
+        fields.stream()
+                .map(field -> generateGetter(project, field))
+                .forEach(rootClass::add);
+
+        rootClass.add(generateConstructor(project, rootClass, fields));
+        rootClass.add(generateEquals(project, rootClass, fields));
+        rootClass.add(generateHashCode(project, rootClass, fields));
+        rootClass.add(generateToString(project, rootClass, fields));
+
+        // Delete inner class
+        List<PsiClass> innerClasses = Arrays.asList(rootClass.getInnerClasses());
+
+        PsiClass builderClass = innerClasses.stream()
+                .filter(innerClass -> innerClass.getName().equals("Builder"))
+                .findFirst()
+                .orElseGet(() -> generateBuilderClass(project, rootClass));
+
+        // Delete builder fields
+        Arrays.stream(builderClass.getFields())
+                .forEach(PsiField::delete);
+
+        // Delete potential builder methods
+        Set<String> potentialBuilderMethodsToDelete = new HashSet<>(potentialGetters);
+        potentialBuilderMethodsToDelete.add("build");
+
+        List<PsiMethod> builderMethods = Arrays.asList(builderClass.getMethods());
+
+        List<PsiMethod> builderMethodsToDelete = Arrays.stream(builderClass.getMethods())
+                .filter(method -> potentialBuilderMethodsToDelete.contains(method.getName()))
+                .collect(Collectors.toList());
+
+        builderMethodsToDelete.forEach(PsiMethod::delete);
+
+        // Delete builder constructors
+        Arrays.stream(builderClass.getConstructors())
+                .forEach(PsiMethod::delete);
+
+        // Generate builder fields
+        fields.stream()
+                .map(field -> generateField(project, field))
+                .forEach(builderClass::add);
+
+        // Generate builder methods
+        fields.stream()
+                .map(field -> generateBuilderMethod(project, builderClass, field))
+                .forEach(builderClass::add);
+
+        // Generate build method
+        builderClass.add(generateBuildMethod(project, rootClass, fields));
+
+        // Attach builder class
+        rootClass.add(generateNewBuilderMethod(project, rootClass, builderClass));
+
+        // Shorten class names
+        JavaCodeStyleManager codeStyleManager = JavaCodeStyleManager.getInstance(project);
+
+        codeStyleManager.shortenClassReferences(rootClass);
     }
 
     private PsiMethod generateGetter(Project project,
@@ -338,5 +380,9 @@ public class RecordBeanActionHandler implements LanguageCodeInsightActionHandler
         PsiUtil.setModifierProperty(method, PsiModifier.STATIC, true);
 
         return method;
+    }
+
+    private static String capitalize(String str) {
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
 }
