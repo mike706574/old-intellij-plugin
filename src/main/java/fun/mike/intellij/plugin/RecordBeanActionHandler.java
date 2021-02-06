@@ -288,19 +288,22 @@ public class RecordBeanActionHandler implements LanguageCodeInsightActionHandler
 
         method.getModifierList().addAnnotation("Override");
 
-        // Field checks
+        // Fields
         String concatenations = fields.stream()
                 .map(field -> {
+                    boolean isString = field.getType().getCanonicalText().equals("java.lang.String");
                     String fieldName = field.getName();
-                    return fieldName + "=" + fieldName;
+                    String rightSide = isString ? "'\" + " + fieldName + " + \"'" :
+                            "\" + " + fieldName + " + \"";
+                    return fieldName + "=" + rightSide;
                 })
-                .collect(Collectors.joining(", \" +\n\"")); // TODO: Surround strings with quotes
+                .collect(Collectors.joining(", \" +\n\""));
 
-        PsiStatement fieldCheckStatement = elementFactory
+        PsiStatement returnStatement = elementFactory
                 .createStatementFromText("return \"" + className + "{\" +\n\"" + concatenations + "}\";",
                                          method);
 
-        method.getBody().add(fieldCheckStatement);
+        method.getBody().add(returnStatement);
 
         return method;
     }
