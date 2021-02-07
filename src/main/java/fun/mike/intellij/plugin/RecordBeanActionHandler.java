@@ -4,6 +4,7 @@ import com.intellij.lang.LanguageCodeInsightActionHandler;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.PsiAnnotation;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiClassType;
 import com.intellij.psi.PsiElement;
@@ -155,7 +156,7 @@ public class RecordBeanActionHandler implements LanguageCodeInsightActionHandler
 
         method.getBody().add(returnStatement);
 
-        method.getModifierList().addAnnotation(JSON_PROPERTY_ANNOTATION);
+        method.getModifierList().addAnnotation(JSON_PROPERTY_ANNOTATION + "(\"" + field.getName() + "\")");
 
         return method;
     }
